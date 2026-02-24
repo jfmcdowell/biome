@@ -135,7 +135,7 @@ fn emit_quote_prefix_tokens(p: &mut MarkdownParser, use_virtual_line_start: bool
         None
     };
 
-    // Emit pre-marker indent as MdQuoteIndentList > MdQuoteIndent nodes
+    // Emit pre-marker indent (0-3 spaces allowed before `>`, per CommonMark §5.1).
     let indent_list_m = p.start();
     let mut consumed = 0usize;
     while p.at(MD_TEXTUAL_LITERAL) {
@@ -143,7 +143,11 @@ fn emit_quote_prefix_tokens(p: &mut MarkdownParser, use_virtual_line_start: bool
         if text.is_empty() || !text.chars().all(|c| c == ' ' || c == '\t') {
             break;
         }
-        let indent: usize = text.chars().map(|c| if c == '\t' { 4 } else { 1 }).sum();
+        // Tabs expand to tab-stop width (CommonMark §2.2).
+        let indent: usize = text
+            .chars()
+            .map(|c| if c == '\t' { TAB_STOP_SPACES } else { 1 })
+            .sum();
         if consumed + indent > 3 {
             break;
         }
