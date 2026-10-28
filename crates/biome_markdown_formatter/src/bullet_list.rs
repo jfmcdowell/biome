@@ -17,9 +17,9 @@ use biome_formatter::{Format, FormatResult, format_args, write};
 use biome_markdown_syntax::list_ext::{AnyListItem, ListMarker, OrderedListDelimiter};
 use biome_markdown_syntax::thematic_break_ext::MdThematicBreakMarker;
 use biome_markdown_syntax::{
-    AnyMdBlock, AnyMdCodeBlock, AnyMdInline, AnyMdLeafBlock, MarkdownLanguage, MdBlockList,
-    MdBullet, MdBulletFields, MdBulletList, MdBulletListItem, MdContinuationIndent,
-    MdIndentTokenList, MdOrderedListItem, MdQuotePrefix,
+    AnyMdBlock, AnyMdCodeBlock, AnyMdInline, AnyMdLeafBlock, MarkdownLanguage, MarkdownSyntaxNode,
+    MdBlockList, MdBullet, MdBulletFields, MdBulletList, MdBulletListItem, MdContinuationIndent,
+    MdIndentTokenList, MdOrderedListItem, MdQuote, MdQuotePrefix,
 };
 use biome_rowan::{AstNode, AstNodeList, AstNodeListIterator, Direction, SyntaxError};
 use std::collections::VecDeque;
@@ -181,7 +181,45 @@ impl Format<MarkdownFormatContext> for BulletListPrinter {
             joiner.entry(item);
             previous = Some(item);
         }
+
+        // After the last bullet, a trailing prefix starts the line of the block
+        // that follows the list in the quote's content.
+        if let Some(last) = previous
+            && content_ends_with_quote_prefix(&last.node)
+            && let Some(next_block) = block_after_list_in_quote(&last.node)
+        {
+            let line_prefix = quote_line_prefix(&next_block)?;
+            if !line_prefix.is_empty() {
+                joiner.entry(&format_with(|f| {
+                    write!(
+                        f,
+                        [dedent_to_root(&format_args![
+                            hard_line_break(),
+                            line_prefix.format(true)
+                        ])]
+                    )
+                }));
+            }
+        }
         joiner.finish()
+    }
+}
+
+/// The block after the list that holds `bullet`, when that list sits directly
+/// in a block quote's content.
+///
+/// Returns `None` for a list nested in another list item, whose following
+/// line belongs to the enclosing item's content.
+fn block_after_list_in_quote(bullet: &MdBullet) -> Option<MarkdownSyntaxNode> {
+    let list_item = bullet.syntax().parent()?.parent()?;
+    let in_quote_content = list_item
+        .parent()
+        .and_then(|content| content.parent())
+        .is_some_and(|container| MdQuote::can_cast(container.kind()));
+    if in_quote_content {
+        list_item.next_sibling()
+    } else {
+        None
     }
 }
 

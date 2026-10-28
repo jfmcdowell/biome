@@ -1,0 +1,55 @@
+---
+source: crates/biome_formatter_test/src/snapshot_builder.rs
+info: markdown/blockquote_list_following_block.md
+---
+
+# Input
+
+```md
+> - a
+>   b
+> # h
+
+> - a
+>   b
+> > c
+
+> > - a
+> >   b
+> > # h
+
+> 1. a
+>    b
+> ***
+
+- > - a
+  >   b
+  > # h
+
+```
+
+
+# Formatted
+
+```md
+> - a
+>   b
+> # h
+
+> - a
+>   b
+> > c
+
+> > - a
+> >   b
+> > # h
+
+> 1. a
+>    b
+> ---
+
+- > - a
+  >   b
+  > # h
+
+```
