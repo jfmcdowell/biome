@@ -220,6 +220,29 @@ pub(crate) fn enclosing_list_content_indent(p: &MarkdownParser, indent: usize) -
     0
 }
 
+/// Content column of the deepest open list item outside the innermost block
+/// quote that a line indented by `indent` columns still continues, or 0 when
+/// it continues none.
+///
+/// Use for a line without the innermost quote's prefix: containers match from
+/// the outside in (CommonMark §5.1), so items inside that quote cannot continue
+/// the line. Items inside an outer quote are not matched here; the line then
+/// continues none of them.
+pub(crate) fn list_content_indent_outside_quote(p: &MarkdownParser, indent: usize) -> usize {
+    let quote_depth = p.state().block_quote_depth;
+    let mut item = p.state().open_list_item.as_deref();
+    while let Some(current) = item {
+        if current.block_quote_depth > 0 && current.block_quote_depth < quote_depth {
+            return 0;
+        }
+        if current.block_quote_depth == 0 && current.required_indent <= indent {
+            return current.required_indent;
+        }
+        item = current.parent.as_deref();
+    }
+    0
+}
+
 fn list_item_within_indent(p: &mut MarkdownParser, base_indent: usize) -> bool {
     if !p.is_at_line_start() {
         return false;
@@ -3029,8 +3052,21 @@ fn parse_list_item_block_content(
         }
         let line_has_quote_prefix = blank.line_has_quote_prefix;
 
-        // Consume quote prefix if present
+        // Containers match from the outside in (CommonMark §5.1), so a line
+        // without the prefix of the quote holding this item cannot continue
+        // the item, whatever its indentation. Lazy paragraph lines never get
+        // here: the paragraph consumes them.
         let quote_depth = p.state().block_quote_depth;
+        if !state.first_line
+            && quote_depth > 0
+            && !line_has_quote_prefix
+            && !p.at(NEWLINE)
+            && (p.is_at_line_start() || p.has_preceding_line_break())
+        {
+            break;
+        }
+
+        // Consume quote prefix if present
         if line_has_quote_prefix {
             consume_quote_prefix(p, quote_depth);
         }

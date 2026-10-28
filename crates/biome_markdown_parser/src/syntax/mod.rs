@@ -60,8 +60,8 @@ use inline::EmphasisContext;
 use link_block::{at_link_block_start, parse_link_block};
 use list::{
     at_bullet_list_item, at_order_list_item, at_sibling_list_marker, enclosing_list_content_indent,
-    marker_followed_by_whitespace_or_eol, parse_bullet_list_item, parse_order_list_item,
-    textual_starts_with_ordered_marker,
+    list_content_indent_outside_quote, marker_followed_by_whitespace_or_eol,
+    parse_bullet_list_item, parse_order_list_item, textual_starts_with_ordered_marker,
 };
 use quote::{
     at_quote, consume_quote_prefix, consume_quote_prefix_without_virtual, has_quote_prefix,
@@ -1122,6 +1122,11 @@ fn at_paragraph_break(p: &mut MarkdownParser, has_content: bool) -> bool {
 enum InlineNewlineAction {
     Break,
     Continue,
+    /// The line continues the paragraph lazily, outside the quote that holds
+    /// the innermost open list item. Its block starts were already checked
+    /// against the containers it continues, so they must not be checked
+    /// again with that item's indent.
+    ContinueLazy,
 }
 
 fn emit_inline_newline_as_text(p: &mut MarkdownParser) {
@@ -1422,12 +1427,57 @@ fn handle_line_continuation(
         return InlineNewlineAction::Break;
     }
 
+    // Containers match from the outside in (CommonMark §5.1): without the
+    // quote's prefix, the list item open inside that quote cannot continue the
+    // line, so the line is lazy text unless it starts a block at the level of
+    // the containers it still continues.
+    if quote_depth > 0
+        && !line_has_quote_prefix
+        && p.state()
+            .open_list_item
+            .as_deref()
+            .is_some_and(|item| item.block_quote_depth == quote_depth)
+    {
+        let base_indent = list_content_indent_outside_quote(p, p.line_start_leading_indent());
+        let prev_required = p.state().list_item_required_indent;
+        p.state_mut().list_item_required_indent = base_indent;
+        let action = handle_line_after_container_prefixes(
+            p,
+            has_content,
+            emit_indent_tokens,
+            base_indent,
+            true,
+        );
+        p.state_mut().list_item_required_indent = prev_required;
+        return match action {
+            InlineNewlineAction::Continue => InlineNewlineAction::ContinueLazy,
+            action => action,
+        };
+    }
+
     let required_indent = if line_has_quote_prefix {
         list_indent_inside_quote(p)
     } else {
         p.state().list_item_required_indent
     };
-    if break_for_setext_after_inline_newline(p, has_content, required_indent) {
+    handle_line_after_container_prefixes(p, has_content, emit_indent_tokens, required_indent, false)
+}
+
+/// Decide whether the line after a paragraph's newline ends the paragraph,
+/// once its quote prefixes are consumed. `required_indent` is the content
+/// column of the list item the line continues, or 0 outside list items.
+///
+/// `is_lazy` is true when the line is outside the paragraph's innermost
+/// container. Such a line can only continue the paragraph lazily, so it is
+/// never a setext underline (CommonMark §4.3).
+fn handle_line_after_container_prefixes(
+    p: &mut MarkdownParser,
+    has_content: bool,
+    emit_indent_tokens: bool,
+    required_indent: usize,
+    is_lazy: bool,
+) -> InlineNewlineAction {
+    if !is_lazy && break_for_setext_after_inline_newline(p, has_content, required_indent) {
         return InlineNewlineAction::Break;
     }
 
@@ -1478,6 +1528,7 @@ pub(crate) fn parse_inline_item_list_with_task_list_item(
     let inline_start: usize = p.cur_range().start().into();
     let mut has_content = false;
     let mut after_hard_break = false;
+    let mut line_continues_lazily = false;
 
     loop {
         // EOF ends inline content
@@ -1502,11 +1553,11 @@ pub(crate) fn parse_inline_item_list_with_task_list_item(
             if after_hard_break {
                 break;
             }
-            if matches!(
-                handle_inline_newline(p, has_content),
-                InlineNewlineAction::Break
-            ) {
-                break;
+            match handle_inline_newline(p, has_content) {
+                InlineNewlineAction::Break => break,
+                action => {
+                    line_continues_lazily = matches!(action, InlineNewlineAction::ContinueLazy);
+                }
             }
             continue;
         }
@@ -1533,12 +1584,15 @@ pub(crate) fn parse_inline_item_list_with_task_list_item(
 
         // Per CommonMark, certain block-level constructs can interrupt paragraphs
         // without requiring a blank line. Check for these at line start.
-        if p.has_preceding_line_break() && at_block_interrupt(p) {
+        if p.has_preceding_line_break() && !line_continues_lazily && at_block_interrupt(p) {
             break;
         }
 
         // Also check for list markers in textual content (see comment above)
-        if p.has_preceding_line_break() && textual_looks_like_list_marker(p) {
+        if p.has_preceding_line_break()
+            && !line_continues_lazily
+            && textual_looks_like_list_marker(p)
+        {
             break;
         }
 
@@ -1558,11 +1612,11 @@ pub(crate) fn parse_inline_item_list_with_task_list_item(
                 break;
             }
 
-            if matches!(
-                handle_line_continuation(p, has_content, false),
-                InlineNewlineAction::Break
-            ) {
-                break;
+            match handle_line_continuation(p, has_content, false) {
+                InlineNewlineAction::Break => break,
+                action => {
+                    line_continues_lazily = matches!(action, InlineNewlineAction::ContinueLazy);
+                }
             }
 
             while p.at(MD_TEXTUAL_LITERAL) && p.cur_text().chars().all(|c| c == ' ' || c == '\t') {
