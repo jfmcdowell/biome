@@ -3,10 +3,11 @@ use crate::markdown::auxiliary::hard_line::FormatMdFormatHardLineOptions;
 use crate::markdown::auxiliary::inline_italic::FormatMdInlineItalicOptions;
 use crate::markdown::auxiliary::textual::FormatMdTextualOptions;
 use crate::prelude::*;
+use crate::quote::quote_line_prefix;
 use crate::shared::{TextContext, TextPrintMode, TrimMode};
 use crate::words::{ProseItem, ProseItemList, WordGroup};
-use biome_formatter::Format;
-use biome_markdown_syntax::MdBullet;
+use biome_formatter::{Format, format_args};
+use biome_markdown_syntax::{MdBullet, MdQuote};
 
 /// Formats Markdown text on one line, replacing whitespace and line breaks with spaces.
 struct FormatSourceLine<'a>(&'a [ProseItem]);
@@ -116,6 +117,17 @@ fn outdented_list_marker_lines(
     }
 
     Ok((lines, indented_lines))
+}
+
+/// Whether the source line that `items` starts with contains any words.
+///
+/// The soft break that ends a paragraph's last line is followed by no words,
+/// so it starts no continuation line.
+fn next_line_has_words(items: &[ProseItem]) -> bool {
+    items
+        .iter()
+        .take_while(|item| !matches!(item, ProseItem::SoftBreak | ProseItem::HardBreak(_)))
+        .any(|item| matches!(item, ProseItem::WordGroup(_)))
 }
 
 fn starts_with_list_marker(text: &str) -> bool {
@@ -894,6 +906,19 @@ impl FormatMdInlineItemList {
         } else {
             (Vec::new(), Vec::new())
         };
+        // In a list item inside a block quote, the list prints paragraphs that
+        // carry `>` markers verbatim, so every line break reaching this point
+        // starts a lazy continuation line, which lacks the quote's markers.
+        let lazy_line_prefix = if inside_list
+            && node
+                .syntax()
+                .ancestors()
+                .any(|ancestor| MdQuote::can_cast(ancestor.kind()))
+        {
+            Some(quote_line_prefix(node.syntax())?)
+        } else {
+            None
+        };
 
         let mut is_first_line = true;
         let mut line_index = 0;
@@ -938,7 +963,26 @@ impl FormatMdInlineItemList {
                             &outdented_lines,
                             f,
                         )?;
-                        if next_line_is_outdented_list_marker {
+                        if let Some(line_prefix) = &lazy_line_prefix
+                            && next_line_has_words(&items[i + 1..])
+                        {
+                            // Joining keeps an indented lazy line's text from
+                            // starting a block once its indentation is gone,
+                            // as for lazy lines in quotes outside lists. Other
+                            // lazy lines get the markers they omitted.
+                            if matches!(items.get(i + 1), Some(ProseItem::OutdentedLineStart)) {
+                                write!(f, [space()])?;
+                            } else {
+                                write!(
+                                    f,
+                                    [dedent_to_root(&format_args![
+                                        hard_line_break(),
+                                        line_prefix.format(true)
+                                    ])]
+                                )?;
+                            }
+                            is_first_line = true;
+                        } else if next_line_is_outdented_list_marker {
                             write!(f, [space()])?;
                             is_first_line = true;
                         } else {
