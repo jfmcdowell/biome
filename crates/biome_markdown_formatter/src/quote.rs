@@ -12,11 +12,12 @@ use crate::{AsFormat, MarkdownFormatContext, MarkdownFormatter};
 use biome_formatter::{Format, FormatResult, format_args, write};
 use biome_markdown_syntax::{
     AnyMdBlock, AnyMdContainerBlock, AnyMdInline, AnyMdLeafBlock, MarkdownSyntaxNode, MdBlockList,
-    MdBullet, MdParagraph, MdQuote, MdQuoteFields,
+    MdBullet, MdParagraph, MdQuote, MdQuoteFields, MdQuotePrefix,
 };
 use biome_rowan::AstNode;
 use biome_rowan::TextSize;
-use std::ops::Add;
+use std::iter::Peekable;
+use std::ops::{Add, Range};
 
 pub(crate) struct Quote {
     node: MdQuote,
@@ -100,15 +101,19 @@ impl Format<MarkdownFormatContext> for QuoteBlockList {
         let quote_trim_range = quote_boundary_trim_range(&self.content, self.quote_boundary_trim);
         let prose_wrap = f.options().prose_wrap();
         let mut prev_content = PrevContentBlock::None;
+        let mut prev_is_list_item = false;
         let mut iter = self.content.iter().enumerate().peekable();
         let mut joiner = f.join();
 
         while let Some((index, block)) = iter.next() {
             if !quote_trim_range.contains(&index) {
                 joiner.entry(&format_with(|f| format_removed_quote_boundary(&block, f)));
+                prev_is_list_item = false;
                 continue;
             }
 
+            let follows_list_item =
+                std::mem::replace(&mut prev_is_list_item, block.as_any_list_item().is_some());
             match &block {
                 AnyMdBlock::AnyMdLeafBlock(AnyMdLeafBlock::MdParagraph(paragraph)) => {
                     prev_content = PrevContentBlock::Paragraph;
@@ -200,6 +205,13 @@ impl Format<MarkdownFormatContext> for QuoteBlockList {
                         )
                     });
                     joiner.entry(&entry);
+                }
+
+                AnyMdBlock::MdQuotePrefix(prefix) if follows_list_item => {
+                    prev_content = PrevContentBlock::Other;
+                    let line =
+                        QuoteLineAfterList::new(prefix.clone(), &mut iter, &quote_trim_range)?;
+                    joiner.entry(&line);
                 }
 
                 AnyMdBlock::MdQuotePrefix(prefix) => {
@@ -450,6 +462,65 @@ pub(crate) fn quote_line_prefix(syntax: &MarkdownSyntaxNode) -> FormatResult<Quo
     }
 
     Ok(QuoteLinePrefix { parts })
+}
+
+/// The quote markers that start the line after a list in a quote's content.
+///
+/// A list ends with a line break that the enclosing `align` indents, so markers
+/// printed in place would land at the list's indentation. This removes the
+/// marker nodes and prints the whole line prefix from the root instead.
+pub(crate) struct QuoteLineAfterList {
+    prefixes: Vec<MdQuotePrefix>,
+    line_prefix: QuoteLinePrefix,
+    has_content: bool,
+}
+
+impl QuoteLineAfterList {
+    /// Collects `first` and the marker nodes after it on the same line from
+    /// `blocks`, a quote's content entries paired with their indices. Only
+    /// entries whose index is in `content_range` are taken.
+    pub(crate) fn new(
+        first: MdQuotePrefix,
+        blocks: &mut Peekable<impl Iterator<Item = (usize, AnyMdBlock)>>,
+        content_range: &Range<usize>,
+    ) -> FormatResult<Self> {
+        let line_prefix = quote_line_prefix(first.syntax())?;
+        let mut prefixes = vec![first];
+        while let Some((_, AnyMdBlock::MdQuotePrefix(prefix))) = blocks.next_if(|(index, block)| {
+            content_range.contains(index) && matches!(block, AnyMdBlock::MdQuotePrefix(_))
+        }) {
+            prefixes.push(prefix);
+        }
+        let has_content = blocks.peek().is_some_and(|(_, block)| !block.is_newline());
+
+        Ok(Self {
+            prefixes,
+            line_prefix,
+            has_content,
+        })
+    }
+}
+
+impl Format<MarkdownFormatContext> for QuoteLineAfterList {
+    fn fmt(&self, f: &mut MarkdownFormatter) -> FormatResult<()> {
+        for prefix in &self.prefixes {
+            write!(
+                f,
+                [prefix.format().with_options(FormatMdQuotePrefixOptions {
+                    should_remove: true,
+                })]
+            )?;
+        }
+        // The list's line break already fixed this line's indentation. A
+        // break inside the dedent resets it without adding a blank line.
+        write!(
+            f,
+            [dedent_to_root(&format_args![
+                hard_line_break(),
+                self.line_prefix.format(self.has_content)
+            ])]
+        )
+    }
 }
 
 fn should_format_quote_paragraph(paragraph: &MdParagraph) -> FormatResult<bool> {

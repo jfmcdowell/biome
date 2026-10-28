@@ -1,0 +1,60 @@
+---
+source: crates/biome_formatter_test/src/snapshot_builder.rs
+assertion_line: 249
+info: markdown/blockquote_list_blank_line.md
+---
+
+# Input
+
+```md
+> - item one
+>   continued.
+>
+> Paragraph line one
+> line two.
+
+> > - a
+> >   continued.
+> >
+> > Paragraph
+> > line two.
+
+- > - a
+  >   continued.
+  >
+  > Paragraph
+  > line two.
+
+* > - a
+  >
+  > b
+
+```
+
+
+# Formatted
+
+```md
+> - item one
+>   continued.
+>
+> Paragraph line one
+> line two.
+
+> > - a
+> >   continued.
+> >
+> > Paragraph
+> > line two.
+
+- > - a
+  >   continued.
+  >
+  > Paragraph
+  > line two.
+
+* > - a
+  >
+  > b
+
+```

@@ -4,7 +4,7 @@ use crate::markdown::auxiliary::newline::FormatMdNewlineOptions;
 use crate::markdown::auxiliary::paragraph::FormatMdParagraphOptions;
 use crate::markdown::auxiliary::quote_prefix::FormatMdQuotePrefixOptions;
 use crate::prelude::*;
-use crate::quote::quote_line_prefix;
+use crate::quote::{QuoteLineAfterList, quote_line_prefix};
 use crate::shared::{TextContext, TextPrintMode, format_removed_quote_boundary};
 use biome_formatter::FormatRuleWithOptions;
 use biome_formatter::{format_args, write};
@@ -41,14 +41,18 @@ impl FormatRule<MdBlockList> for FormatMdBlockList {
         if should_not_trim {
             let quote_trim_range = quote_boundary_trim_range(node, self.quote_boundary_trim);
             let mut prev_content = PrevContentBlock::None;
+            let mut prev_is_list_item = false;
             let mut iter = node.iter().enumerate().peekable();
 
             while let Some((index, node)) = iter.next() {
                 if !quote_trim_range.contains(&index) {
                     joiner.entry(&format_with(|f| format_removed_quote_boundary(&node, f)));
+                    prev_is_list_item = false;
                     continue;
                 }
 
+                let follows_list_item =
+                    std::mem::replace(&mut prev_is_list_item, node.as_any_list_item().is_some());
                 match &node {
                     AnyMdBlock::AnyMdLeafBlock(AnyMdLeafBlock::MdParagraph(paragraph)) => {
                         prev_content = PrevContentBlock::Paragraph;
@@ -121,6 +125,13 @@ impl FormatRule<MdBlockList> for FormatMdBlockList {
                             write!(f, [prefix.format()])
                         });
                         joiner.entry(&entry);
+                    }
+
+                    AnyMdBlock::MdQuotePrefix(prefix) if follows_list_item => {
+                        prev_content = PrevContentBlock::Other;
+                        let line =
+                            QuoteLineAfterList::new(prefix.clone(), &mut iter, &quote_trim_range)?;
+                        joiner.entry(&line);
                     }
 
                     AnyMdBlock::MdQuotePrefix(_) => {
