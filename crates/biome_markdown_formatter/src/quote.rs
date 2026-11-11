@@ -12,7 +12,7 @@ use crate::{AsFormat, MarkdownFormatContext, MarkdownFormatter};
 use biome_formatter::{Format, FormatResult, format_args, write};
 use biome_markdown_syntax::{
     AnyMdBlock, AnyMdContainerBlock, AnyMdInline, AnyMdLeafBlock, MarkdownSyntaxNode, MdBlockList,
-    MdBullet, MdParagraph, MdQuote, MdQuoteFields,
+    MdBullet, MdParagraph, MdQuote, MdQuoteFields, MdTextual,
 };
 use biome_rowan::AstNode;
 use biome_rowan::TextSize;
@@ -290,7 +290,19 @@ impl<'a> Format<MarkdownFormatContext> for QuoteParagraph<'a> {
         for (index, item) in self.paragraph.list().iter().enumerate() {
             match item {
                 AnyMdInline::MdTextual(textual) => {
-                    if after_removed_continuation_prefix
+                    if after_quote_continuation_newline
+                        && is_setext_underline_line(self.paragraph, index, &textual)?
+                    {
+                        // The line is printed with the paragraph's full quote
+                        // prefix, which would make it a setext underline.
+                        joiner.entry(&textual.format().with_options(FormatMdTextualOptions {
+                            should_escape: true,
+                            ..FormatMdTextualOptions::default()
+                        }));
+                        after_quote_continuation_newline = false;
+                        after_removed_continuation_prefix = false;
+                        after_indented_continuation_newline = false;
+                    } else if after_removed_continuation_prefix
                         && textual.value_token()?.text().starts_with(' ')
                     {
                         let token = textual.value_token()?;
@@ -563,6 +575,29 @@ fn block_list_has_quote_continuation(content: &MdBlockList) -> FormatResult<bool
     }
 
     Ok(false)
+}
+
+/// Returns whether the item at `index` is a whole paragraph line of `=` or of
+/// `-` characters. Such a line continues the paragraph only lazily, because
+/// with the paragraph's full quote prefix it would be a setext underline.
+fn is_setext_underline_line(
+    paragraph: &MdParagraph,
+    index: usize,
+    textual: &MdTextual,
+) -> FormatResult<bool> {
+    let token = textual.value_token()?;
+    let text = token.text().trim_end_matches([' ', '\t']);
+    let Some(first) = text.bytes().next() else {
+        return Ok(false);
+    };
+    if !matches!(first, b'=' | b'-') || !text.bytes().all(|byte| byte == first) {
+        return Ok(false);
+    }
+    match paragraph.list().iter().nth(index + 1) {
+        None => Ok(true),
+        Some(AnyMdInline::MdTextual(next)) => Ok(next.is_newline()?),
+        Some(_) => Ok(false),
+    }
 }
 
 fn should_format_quote_continuation_after_newline(

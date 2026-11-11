@@ -1228,8 +1228,6 @@ fn break_for_quote_prefix_after_inline_newline(p: &mut MarkdownParser, quote_dep
                 consume_quote_prefix(p, quote_depth);
             }
         }
-    } else if at_indented_quote_marker(p) {
-        consume_outer_quote_prefix(p, quote_depth, consume_quote_prefix);
     }
 
     if p.at(R_ANGLE) && !has_quote_prefix(p, quote_depth) {
@@ -1239,23 +1237,29 @@ fn break_for_quote_prefix_after_inline_newline(p: &mut MarkdownParser, quote_dep
     false
 }
 
-/// Returns whether the line starts with spaces or tabs followed by `>`.
+/// Returns whether the line has outer quote markers that
+/// [`consume_partial_quote_prefix`] can't consume: a marker after spaces or
+/// tabs, or more markers than the quotes that start at column 0 of the line.
 ///
-/// A quote nested in a list item has the item's indent before its marker, so
-/// a line that keeps only the outer quotes of a nested quote starts this way.
-fn at_indented_quote_marker(p: &MarkdownParser) -> bool {
-    let rest = p.source_after_current().as_bytes();
+/// A quote nested in a list item has the item's indent before its marker, so a
+/// line that keeps only the outer quotes of such a quote has an indented marker.
+fn at_outer_quote_markers(p: &MarkdownParser, depth: usize) -> bool {
+    let rest = p.source_after_current();
     let indent = rest
-        .iter()
+        .bytes()
         .take_while(|byte| matches!(byte, b' ' | b'\t'))
         .count();
-    indent > 0 && rest.get(indent) == Some(&b'>')
+    if rest.as_bytes().get(indent) != Some(&b'>') {
+        return false;
+    }
+    indent > 0 || list::count_quote_prefixes(rest) > unindented_quote_levels(p, depth)
 }
 
 /// Consumes the prefix of the deepest enclosing quote, shallower than `depth`,
 /// that the line continues, including the indents of the containers between
-/// those quotes, when the rest of the line is a lazy continuation of the
-/// paragraph in the deeper quote.
+/// those quotes, and returns whether it did. The rest of the line is then a
+/// lazy continuation of the paragraph in the deeper quote, so it is never a
+/// setext underline.
 ///
 /// When the rest is blank or starts a block, nothing is consumed: the line
 /// belongs to the outer quote, so the paragraph and the deeper quotes must end
@@ -1264,19 +1268,22 @@ fn consume_outer_quote_prefix(
     p: &mut MarkdownParser,
     depth: usize,
     consume: fn(&mut MarkdownParser, usize) -> bool,
-) {
+) -> bool {
     let checkpoint = p.checkpoint();
     for outer_depth in (1..depth).rev() {
         if consume(p, outer_depth) {
             if rest_of_line_is_blank(p)
                 || at_block_interrupt(p)
                 || textual_looks_like_list_marker(p)
+                || begins_blockquote_terminating_block(p)
             {
                 p.rewind(checkpoint);
+                return false;
             }
-            return;
+            return true;
         }
     }
+    false
 }
 
 fn rest_of_line_is_blank(p: &MarkdownParser) -> bool {
@@ -1505,6 +1512,16 @@ fn handle_line_continuation(
 
     let quote_depth = p.state().block_quote_depth;
     let line_has_quote_prefix = quote_depth > 0 && has_quote_prefix(p, quote_depth);
+    if quote_depth > 1
+        && !line_has_quote_prefix
+        && at_outer_quote_markers(p, quote_depth)
+        && consume_outer_quote_prefix(p, quote_depth, consume_quote_prefix)
+    {
+        if emit_indent_tokens {
+            emit_inline_continuation_indent(p, 0);
+        }
+        return InlineNewlineAction::ContinueLazy;
+    }
     if break_for_quote_prefix_after_inline_newline(p, quote_depth) {
         return InlineNewlineAction::Break;
     }
@@ -1656,6 +1673,7 @@ pub(crate) fn parse_inline_item_list_with_task_list_item(
         // Check if we're at a setext heading underline (stop for paragraph to handle)
         // Per CommonMark §4.3, setext underlines can be indented 0-3 spaces only.
         if has_content
+            && !line_continues_lazily
             && p.at(MD_SETEXT_UNDERLINE_LITERAL)
             && real_line_indent_from_source(p) < INDENT_CODE_BLOCK_SPACES
             && allow_setext_heading(p)
@@ -1900,8 +1918,11 @@ fn scan_newline_in_inline_list(p: &mut MarkdownParser, has_content: bool) -> boo
             return true;
         }
         consume_quote_prefix_without_virtual(p, quote_depth);
-    } else if quote_depth > 0 && at_indented_quote_marker(p) {
-        consume_outer_quote_prefix(p, quote_depth, consume_quote_prefix_without_virtual);
+    } else if quote_depth > 1
+        && at_outer_quote_markers(p, quote_depth)
+        && consume_outer_quote_prefix(p, quote_depth, consume_quote_prefix_without_virtual)
+    {
+        return false;
     }
 
     if has_content && p.at(MD_SETEXT_UNDERLINE_LITERAL) && allow_setext_heading(p) {

@@ -1724,7 +1724,6 @@ fn render_autolink(autolink: &MdAutolink, out: &mut String) {
     out.push_str("</a>");
 }
 
-/// Render inline HTML.
 /// Render inline HTML. Inside a block quote, raw HTML that spans lines holds
 /// the quote markers of its later lines, so `quote_indent` strips them.
 fn render_inline_html(html: &MdInlineHtml, quote_indent: usize, out: &mut String) {
