@@ -3079,13 +3079,16 @@ fn parse_list_item_block_content(
         // Containers match from the outside in (CommonMark §5.1), so a line
         // without the prefix of the quote holding this item cannot continue
         // the item, whatever its indentation. Lazy paragraph lines never get
-        // here: the paragraph consumes them.
+        // here: the paragraph consumes them. A nested item can consume the
+        // prefix of a line it then leaves to this item, so a prefix already
+        // consumed on this line counts as present.
         let quote_depth = p.state().block_quote_depth;
         if !state.first_line
             && quote_depth > 0
             && !line_has_quote_prefix
             && !p.at(NEWLINE)
             && (p.is_at_line_start() || p.has_preceding_line_break())
+            && !line_has_quote_prefix_at_current(p, quote_depth)
         {
             break;
         }
