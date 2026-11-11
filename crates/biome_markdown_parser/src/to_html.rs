@@ -554,7 +554,6 @@ enum BufferKind {
 
 struct ParagraphState {
     in_tight_list: bool,
-    quote_indent: usize,
     suppress_wrapping: bool,
 }
 
@@ -688,7 +687,6 @@ impl<'a> HtmlRenderer<'a> {
                     .is_some_and(|state| state.is_tight);
             let state = ParagraphState {
                 in_tight_list,
-                quote_indent: self.quote_indent,
                 suppress_wrapping,
             };
             self.push_buffer(BufferKind::Paragraph(state));
@@ -1046,7 +1044,8 @@ impl<'a> HtmlRenderer<'a> {
         }
 
         if let Some(html) = MdInlineHtml::cast(node.clone()) {
-            render_inline_html(&html, self.out_mut());
+            let quote_indent = self.quote_indent;
+            render_inline_html(&html, quote_indent, self.out_mut());
             self.opaque_depth = Some(self.depth);
             return;
         }
@@ -1097,19 +1096,8 @@ impl<'a> HtmlRenderer<'a> {
                     self.push_str(&buffer.content);
                     return;
                 }
-                let mut content = buffer.content;
-                let mut entity_ranges = buffer.entity_ranges;
-                if state.quote_indent > 0 {
-                    let stripped = strip_quote_prefixes(&content, state.quote_indent);
-                    // The byte ranges no longer line up after stripping
-                    // quote prefixes — fall back to the structural trim
-                    // alone for this (rare) case. Entity ranges are kept
-                    // as `Vec::new()` so no preservation applies.
-                    if stripped != content {
-                        entity_ranges = Vec::new();
-                    }
-                    content = stripped;
-                }
+                let content = buffer.content;
+                let entity_ranges = buffer.entity_ranges;
                 let trimmed = trim_buffer_preserving_entities(&content, &entity_ranges);
                 let base_offset = trimmed.as_ptr() as usize - content.as_ptr() as usize;
                 let content = strip_paragraph_indent(trimmed, base_offset, &entity_ranges);
@@ -1737,16 +1725,23 @@ fn render_autolink(autolink: &MdAutolink, out: &mut String) {
 }
 
 /// Render inline HTML.
-fn render_inline_html(html: &MdInlineHtml, out: &mut String) {
+/// Render inline HTML. Inside a block quote, raw HTML that spans lines holds
+/// the quote markers of its later lines, so `quote_indent` strips them.
+fn render_inline_html(html: &MdInlineHtml, quote_indent: usize, out: &mut String) {
     if let Ok(token) = html.value_token() {
+        let mut text = String::new();
         for comment in token
             .leading_trivia()
             .pieces()
             .filter_map(|piece| piece.as_comments())
         {
-            out.push_str(comment.text());
+            text.push_str(comment.text());
         }
-        out.push_str(token.text_trimmed());
+        text.push_str(token.text_trimmed());
+        if quote_indent > 0 {
+            text = strip_quote_prefixes(&text, quote_indent);
+        }
+        out.push_str(&text);
     }
 }
 

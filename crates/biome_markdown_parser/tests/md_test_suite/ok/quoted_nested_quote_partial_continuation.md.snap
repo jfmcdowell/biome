@@ -98,11 +98,17 @@ MdRoot {
                                                 MdTextual {
                                                     value_token: MD_TEXTUAL_LITERAL@31..32 "\n" [] [],
                                                 },
-                                                MdIndentToken {
-                                                    md_indent_char_token: MD_INDENT_CHAR@32..36 "    " [] [],
+                                                MdQuotePrefix {
+                                                    pre_marker_indent: MdQuoteIndentList [
+                                                        MdQuoteIndent {
+                                                            md_quote_pre_marker_indent_token: MD_QUOTE_PRE_MARKER_INDENT@32..36 "    " [] [],
+                                                        },
+                                                    ],
+                                                    marker_token: R_ANGLE@36..37 ">" [] [],
+                                                    post_marker_space_token: MD_QUOTE_POST_MARKER_SPACE@37..38 " " [] [],
                                                 },
                                                 MdTextual {
-                                                    value_token: MD_TEXTUAL_LITERAL@36..55 "> lazy continuation" [] [],
+                                                    value_token: MD_TEXTUAL_LITERAL@38..55 "lazy continuation" [] [],
                                                 },
                                                 MdTextual {
                                                     value_token: MD_TEXTUAL_LITERAL@55..56 "\n" [] [],
@@ -214,14 +220,22 @@ MdRoot {
                                                         MdTextual {
                                                             value_token: MD_TEXTUAL_LITERAL@95..96 "\n" [] [],
                                                         },
-                                                        MdIndentToken {
-                                                            md_indent_char_token: MD_INDENT_CHAR@96..100 "    " [] [],
+                                                        MdQuotePrefix {
+                                                            pre_marker_indent: MdQuoteIndentList [
+                                                                MdQuoteIndent {
+                                                                    md_quote_pre_marker_indent_token: MD_QUOTE_PRE_MARKER_INDENT@96..100 "    " [] [],
+                                                                },
+                                                            ],
+                                                            marker_token: R_ANGLE@100..101 ">" [] [],
+                                                            post_marker_space_token: MD_QUOTE_POST_MARKER_SPACE@101..102 " " [] [],
+                                                        },
+                                                        MdQuotePrefix {
+                                                            pre_marker_indent: MdQuoteIndentList [],
+                                                            marker_token: R_ANGLE@102..103 ">" [] [],
+                                                            post_marker_space_token: MD_QUOTE_POST_MARKER_SPACE@103..104 " " [] [],
                                                         },
                                                         MdTextual {
-                                                            value_token: MD_TEXTUAL_LITERAL@100..102 "> " [] [],
-                                                        },
-                                                        MdTextual {
-                                                            value_token: MD_TEXTUAL_LITERAL@102..121 "> lazy continuation" [] [],
+                                                            value_token: MD_TEXTUAL_LITERAL@104..121 "lazy continuation" [] [],
                                                         },
                                                         MdTextual {
                                                             value_token: MD_TEXTUAL_LITERAL@121..122 "\n" [] [],
@@ -340,10 +354,14 @@ MdRoot {
                           0: MD_TEXTUAL_LITERAL@25..31 "nested" [] []
                         1: MD_TEXTUAL@31..32
                           0: MD_TEXTUAL_LITERAL@31..32 "\n" [] []
-                        2: MD_INDENT_TOKEN@32..36
-                          0: MD_INDENT_CHAR@32..36 "    " [] []
-                        3: MD_TEXTUAL@36..55
-                          0: MD_TEXTUAL_LITERAL@36..55 "> lazy continuation" [] []
+                        2: MD_QUOTE_PREFIX@32..38
+                          0: MD_QUOTE_INDENT_LIST@32..36
+                            0: MD_QUOTE_INDENT@32..36
+                              0: MD_QUOTE_PRE_MARKER_INDENT@32..36 "    " [] []
+                          1: R_ANGLE@36..37 ">" [] []
+                          2: MD_QUOTE_POST_MARKER_SPACE@37..38 " " [] []
+                        3: MD_TEXTUAL@38..55
+                          0: MD_TEXTUAL_LITERAL@38..55 "lazy continuation" [] []
                         4: MD_TEXTUAL@55..56
                           0: MD_TEXTUAL_LITERAL@55..56 "\n" [] []
     1: MD_NEWLINE@56..57
@@ -415,12 +433,18 @@ MdRoot {
                               0: MD_TEXTUAL_LITERAL@89..95 "nested" [] []
                             1: MD_TEXTUAL@95..96
                               0: MD_TEXTUAL_LITERAL@95..96 "\n" [] []
-                            2: MD_INDENT_TOKEN@96..100
-                              0: MD_INDENT_CHAR@96..100 "    " [] []
-                            3: MD_TEXTUAL@100..102
-                              0: MD_TEXTUAL_LITERAL@100..102 "> " [] []
-                            4: MD_TEXTUAL@102..121
-                              0: MD_TEXTUAL_LITERAL@102..121 "> lazy continuation" [] []
+                            2: MD_QUOTE_PREFIX@96..102
+                              0: MD_QUOTE_INDENT_LIST@96..100
+                                0: MD_QUOTE_INDENT@96..100
+                                  0: MD_QUOTE_PRE_MARKER_INDENT@96..100 "    " [] []
+                              1: R_ANGLE@100..101 ">" [] []
+                              2: MD_QUOTE_POST_MARKER_SPACE@101..102 " " [] []
+                            3: MD_QUOTE_PREFIX@102..104
+                              0: MD_QUOTE_INDENT_LIST@102..102
+                              1: R_ANGLE@102..103 ">" [] []
+                              2: MD_QUOTE_POST_MARKER_SPACE@103..104 " " [] []
+                            4: MD_TEXTUAL@104..121
+                              0: MD_TEXTUAL_LITERAL@104..121 "lazy continuation" [] []
                             5: MD_TEXTUAL@121..122
                               0: MD_TEXTUAL_LITERAL@121..122 "\n" [] []
                     1: MD_QUOTE_PREFIX@122..128

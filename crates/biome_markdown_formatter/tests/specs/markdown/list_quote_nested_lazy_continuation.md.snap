@@ -1,0 +1,42 @@
+---
+source: crates/biome_formatter_test/src/snapshot_builder.rs
+info: markdown/list_quote_nested_lazy_continuation.md
+---
+
+# Input
+
+```md
+1.  item
+    > q
+    > > nested
+    > lazy continuation
+
+---
+
+1.  item
+    > q
+    > > > nested
+    > > lazy continuation
+    > > - sibling in middle quote
+
+
+```
+
+
+# Formatted
+
+```md
+1.  item
+    > q
+    > > nested
+    > > lazy continuation
+
+---
+
+1.  item
+    > q
+    > > > nested
+    > > > lazy continuation
+    > > - sibling in middle quote
+
+```

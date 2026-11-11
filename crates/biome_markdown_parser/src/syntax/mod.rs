@@ -1228,6 +1228,8 @@ fn break_for_quote_prefix_after_inline_newline(p: &mut MarkdownParser, quote_dep
                 consume_quote_prefix(p, quote_depth);
             }
         }
+    } else if at_indented_quote_marker(p) {
+        consume_outer_quote_prefix(p, quote_depth, consume_quote_prefix);
     }
 
     if p.at(R_ANGLE) && !has_quote_prefix(p, quote_depth) {
@@ -1235,6 +1237,53 @@ fn break_for_quote_prefix_after_inline_newline(p: &mut MarkdownParser, quote_dep
     }
 
     false
+}
+
+/// Returns whether the line starts with spaces or tabs followed by `>`.
+///
+/// A quote nested in a list item has the item's indent before its marker, so
+/// a line that keeps only the outer quotes of a nested quote starts this way.
+fn at_indented_quote_marker(p: &MarkdownParser) -> bool {
+    let rest = p.source_after_current().as_bytes();
+    let indent = rest
+        .iter()
+        .take_while(|byte| matches!(byte, b' ' | b'\t'))
+        .count();
+    indent > 0 && rest.get(indent) == Some(&b'>')
+}
+
+/// Consumes the prefix of the deepest enclosing quote, shallower than `depth`,
+/// that the line continues, including the indents of the containers between
+/// those quotes, when the rest of the line is a lazy continuation of the
+/// paragraph in the deeper quote.
+///
+/// When the rest is blank or starts a block, nothing is consumed: the line
+/// belongs to the outer quote, so the paragraph and the deeper quotes must end
+/// first.
+fn consume_outer_quote_prefix(
+    p: &mut MarkdownParser,
+    depth: usize,
+    consume: fn(&mut MarkdownParser, usize) -> bool,
+) {
+    let checkpoint = p.checkpoint();
+    for outer_depth in (1..depth).rev() {
+        if consume(p, outer_depth) {
+            if rest_of_line_is_blank(p)
+                || at_block_interrupt(p)
+                || textual_looks_like_list_marker(p)
+            {
+                p.rewind(checkpoint);
+            }
+            return;
+        }
+    }
+}
+
+fn rest_of_line_is_blank(p: &MarkdownParser) -> bool {
+    p.source_after_current()
+        .bytes()
+        .find(|byte| !matches!(byte, b' ' | b'\t'))
+        .is_none_or(|byte| matches!(byte, b'\n' | b'\r'))
 }
 
 /// Returns `true` when the parser should break so the paragraph parser can
@@ -1851,6 +1900,8 @@ fn scan_newline_in_inline_list(p: &mut MarkdownParser, has_content: bool) -> boo
             return true;
         }
         consume_quote_prefix_without_virtual(p, quote_depth);
+    } else if quote_depth > 0 && at_indented_quote_marker(p) {
+        consume_outer_quote_prefix(p, quote_depth, consume_quote_prefix_without_virtual);
     }
 
     if has_content && p.at(MD_SETEXT_UNDERLINE_LITERAL) && allow_setext_heading(p) {
