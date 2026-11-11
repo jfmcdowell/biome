@@ -3313,7 +3313,9 @@ fn classify_blank_line_in_quote(
                 while p.at(MD_TEXTUAL_LITERAL) && is_whitespace_only(p.cur_text()) {
                     p.bump(MD_TEXTUAL_LITERAL);
                 }
-                p.at(NEWLINE) || p.at(T![EOF])
+                // Two or more trailing spaces lex together with the newline
+                // as MD_HARD_LINE_LITERAL; the line is still blank.
+                p.at(NEWLINE) || p.at(T![EOF]) || p.at(MD_HARD_LINE_LITERAL)
             });
 
             if !line_is_blank {
@@ -3328,8 +3330,8 @@ fn classify_blank_line_in_quote(
                 p.bump(MD_TEXTUAL_LITERAL);
             }
 
-            if p.at(NEWLINE) {
-                p.bump(NEWLINE);
+            if p.at(NEWLINE) || p.at(MD_HARD_LINE_LITERAL) {
+                p.bump(p.cur());
                 continue;
             }
 
@@ -3463,6 +3465,16 @@ fn consume_blank_line(p: &mut MarkdownParser) {
         } else {
             break;
         }
+    }
+
+    // Two or more trailing spaces lex as one MD_HARD_LINE_LITERAL with the
+    // newline. A blank line has no hard break, so re-lex the spaces as one
+    // token, keep them as trivia, and leave the newline to the check below.
+    if p.at(MD_HARD_LINE_LITERAL) {
+        let spaces = p.cur_text().trim_end_matches(['\n', '\r']).len();
+        let end = p.cur_range().start() + TextSize::from(spaces as u32);
+        p.re_lex_span(end, MD_TEXTUAL_LITERAL);
+        p.consume_as_whitespace_trivia();
     }
 
     if p.at(NEWLINE) {
