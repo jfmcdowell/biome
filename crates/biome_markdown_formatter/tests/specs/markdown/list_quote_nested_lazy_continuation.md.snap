@@ -55,6 +55,31 @@ info: markdown/list_quote_nested_lazy_continuation.md
 > > nested
 --
 
+---
+
+> > a
+> ===   
+
+---
+
+> > a
+>    ===
+
+---
+
+> > a
+>  -- 
+
+---
+
+- - > > a
+    > - b
+
+---
+
+1. 1. > > a
+      > - b
+
 ```
 
 
@@ -108,5 +133,30 @@ info: markdown/list_quote_nested_lazy_continuation.md
 
 > > nested
 > > \--
+
+---
+
+> > a
+> > \===   
+
+---
+
+> > a
+> > \===
+
+---
+
+> > a
+> > \-- 
+
+---
+
+- - > > a
+    > - b
+
+---
+
+1. 1. > > a
+      > - b
 
 ```

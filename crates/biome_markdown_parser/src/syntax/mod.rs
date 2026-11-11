@@ -1255,20 +1255,28 @@ fn at_outer_quote_markers(p: &MarkdownParser, depth: usize) -> bool {
     indent > 0 || list::count_quote_prefixes(rest) > unindented_quote_levels(p, depth)
 }
 
+/// How a line with only the outer markers of a nested quote continues.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum OuterQuoteLine {
+    /// The outer prefix was consumed, and the rest of the line is a lazy
+    /// continuation of the paragraph in the deeper quote. It is never a setext
+    /// underline.
+    Lazy,
+    /// The rest of the line is blank or starts a block, so the line belongs to
+    /// the outer quote and the paragraph ends. Nothing was consumed.
+    Outer,
+    /// The line continues none of the enclosing quotes. Nothing was consumed.
+    NoMatch,
+}
+
 /// Consumes the prefix of the deepest enclosing quote, shallower than `depth`,
 /// that the line continues, including the indents of the containers between
-/// those quotes, and returns whether it did. The rest of the line is then a
-/// lazy continuation of the paragraph in the deeper quote, so it is never a
-/// setext underline.
-///
-/// When the rest is blank or starts a block, nothing is consumed: the line
-/// belongs to the outer quote, so the paragraph and the deeper quotes must end
-/// first.
+/// those quotes, when the rest of the line is paragraph text.
 fn consume_outer_quote_prefix(
     p: &mut MarkdownParser,
     depth: usize,
     consume: fn(&mut MarkdownParser, usize) -> bool,
-) -> bool {
+) -> OuterQuoteLine {
     let checkpoint = p.checkpoint();
     for outer_depth in (1..depth).rev() {
         if consume(p, outer_depth) {
@@ -1278,12 +1286,12 @@ fn consume_outer_quote_prefix(
                 || begins_blockquote_terminating_block(p)
             {
                 p.rewind(checkpoint);
-                return false;
+                return OuterQuoteLine::Outer;
             }
-            return true;
+            return OuterQuoteLine::Lazy;
         }
     }
-    false
+    OuterQuoteLine::NoMatch
 }
 
 fn rest_of_line_is_blank(p: &MarkdownParser) -> bool {
@@ -1512,15 +1520,17 @@ fn handle_line_continuation(
 
     let quote_depth = p.state().block_quote_depth;
     let line_has_quote_prefix = quote_depth > 0 && has_quote_prefix(p, quote_depth);
-    if quote_depth > 1
-        && !line_has_quote_prefix
-        && at_outer_quote_markers(p, quote_depth)
-        && consume_outer_quote_prefix(p, quote_depth, consume_quote_prefix)
-    {
-        if emit_indent_tokens {
-            emit_inline_continuation_indent(p, 0);
+    if quote_depth > 1 && !line_has_quote_prefix && at_outer_quote_markers(p, quote_depth) {
+        match consume_outer_quote_prefix(p, quote_depth, consume_quote_prefix) {
+            OuterQuoteLine::Lazy => {
+                if emit_indent_tokens {
+                    emit_inline_continuation_indent(p, 0);
+                }
+                return InlineNewlineAction::ContinueLazy;
+            }
+            OuterQuoteLine::Outer => return InlineNewlineAction::Break,
+            OuterQuoteLine::NoMatch => {}
         }
-        return InlineNewlineAction::ContinueLazy;
     }
     if break_for_quote_prefix_after_inline_newline(p, quote_depth) {
         return InlineNewlineAction::Break;
@@ -1918,11 +1928,12 @@ fn scan_newline_in_inline_list(p: &mut MarkdownParser, has_content: bool) -> boo
             return true;
         }
         consume_quote_prefix_without_virtual(p, quote_depth);
-    } else if quote_depth > 1
-        && at_outer_quote_markers(p, quote_depth)
-        && consume_outer_quote_prefix(p, quote_depth, consume_quote_prefix_without_virtual)
-    {
-        return false;
+    } else if quote_depth > 1 && at_outer_quote_markers(p, quote_depth) {
+        match consume_outer_quote_prefix(p, quote_depth, consume_quote_prefix_without_virtual) {
+            OuterQuoteLine::Lazy => return false,
+            OuterQuoteLine::Outer => return true,
+            OuterQuoteLine::NoMatch => {}
+        }
     }
 
     if has_content && p.at(MD_SETEXT_UNDERLINE_LITERAL) && allow_setext_heading(p) {

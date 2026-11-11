@@ -1079,7 +1079,14 @@ impl<'a> HtmlRenderer<'a> {
         }
 
         if let Some(text) = MdTextual::cast(node.clone()) {
-            render_textual(&text, self.out_mut());
+            if self.quote_indent > 0 && starts_line_in_nested_inline(&text) {
+                let mut rendered = String::new();
+                render_textual(&text, &mut rendered);
+                let stripped = strip_quote_prefixes(&rendered, self.quote_indent);
+                self.push_str(&stripped);
+            } else {
+                render_textual(&text, self.out_mut());
+            }
             return;
         }
 
@@ -1722,6 +1729,45 @@ fn render_autolink(autolink: &MdAutolink, out: &mut String) {
     out.push_str("\">");
     out.push_str(&escape_html(&content));
     out.push_str("</a>");
+}
+
+/// Returns whether `text` starts a line, after any spaces or tabs, inside an
+/// inline container such as emphasis or link text, with a `>` first.
+///
+/// The parser keeps the quote prefix of such a line as text, so the caller
+/// strips it. In the paragraph's own inline list, prefixes are
+/// `MdQuotePrefix` nodes and a leading `>` is text.
+fn starts_line_in_nested_inline(text: &MdTextual) -> bool {
+    let in_nested_list = text
+        .syntax()
+        .parent()
+        .and_then(|list| list.parent())
+        .is_some_and(|container| !MdParagraph::can_cast(container.kind()));
+    if !in_nested_list {
+        return false;
+    }
+    let Ok(token) = text.value_token() else {
+        return false;
+    };
+    if !token
+        .text()
+        .trim_start_matches([' ', '\t'])
+        .starts_with('>')
+    {
+        return false;
+    }
+    let mut previous = token.prev_token();
+    while let Some(prev) = previous {
+        let prev_text = prev.text();
+        if prev_text.ends_with('\n') || prev_text.ends_with('\r') {
+            return true;
+        }
+        if !prev_text.bytes().all(|byte| matches!(byte, b' ' | b'\t')) {
+            return false;
+        }
+        previous = prev.prev_token();
+    }
+    false
 }
 
 /// Render inline HTML. Inside a block quote, raw HTML that spans lines holds

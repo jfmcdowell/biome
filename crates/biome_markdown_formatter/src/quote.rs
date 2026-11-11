@@ -295,10 +295,7 @@ impl<'a> Format<MarkdownFormatContext> for QuoteParagraph<'a> {
                     {
                         // The line is printed with the paragraph's full quote
                         // prefix, which would make it a setext underline.
-                        joiner.entry(&textual.format().with_options(FormatMdTextualOptions {
-                            should_escape: true,
-                            ..FormatMdTextualOptions::default()
-                        }));
+                        joiner.entry(&EscapedUnderlineLine { textual: &textual });
                         after_quote_continuation_newline = false;
                         after_removed_continuation_prefix = false;
                         after_indented_continuation_newline = false;
@@ -322,7 +319,11 @@ impl<'a> Format<MarkdownFormatContext> for QuoteParagraph<'a> {
                                 )]
                             )
                         }));
-                        after_quote_continuation_newline = false;
+                        // Spaces alone leave the line's content, which may
+                        // still need escaping, to the next token.
+                        if !trimmed.bytes().all(|byte| byte == b' ') {
+                            after_quote_continuation_newline = false;
+                        }
                         after_removed_continuation_prefix = false;
                         after_indented_continuation_newline = false;
                     } else if textual.is_newline()?
@@ -578,25 +579,70 @@ fn block_list_has_quote_continuation(content: &MdBlockList) -> FormatResult<bool
 }
 
 /// Returns whether the item at `index` is a whole paragraph line of `=` or of
-/// `-` characters. Such a line continues the paragraph only lazily, because
-/// with the paragraph's full quote prefix it would be a setext underline.
+/// `-` characters, after up to three spaces. Such a line continues the
+/// paragraph only lazily, because with the paragraph's full quote prefix it
+/// would be a setext underline.
 fn is_setext_underline_line(
     paragraph: &MdParagraph,
     index: usize,
     textual: &MdTextual,
 ) -> FormatResult<bool> {
     let token = textual.value_token()?;
-    let text = token.text().trim_end_matches([' ', '\t']);
+    let line = token.text().trim_end_matches([' ', '\t']);
+    let text = line.trim_start_matches(' ');
+    if line.len() - text.len() > 3 {
+        return Ok(false);
+    }
     let Some(first) = text.bytes().next() else {
         return Ok(false);
     };
     if !matches!(first, b'=' | b'-') || !text.bytes().all(|byte| byte == first) {
         return Ok(false);
     }
-    match paragraph.list().iter().nth(index + 1) {
-        None => Ok(true),
-        Some(AnyMdInline::MdTextual(next)) => Ok(next.is_newline()?),
-        Some(_) => Ok(false),
+    // Trailing spaces may be separate tokens, or a hard line break that holds
+    // the newline.
+    for item in paragraph.list().iter().skip(index + 1) {
+        match item {
+            AnyMdInline::MdHardLine(_) => return Ok(true),
+            AnyMdInline::MdTextual(next) => {
+                if next.is_newline()? {
+                    return Ok(true);
+                }
+                let next_token = next.value_token()?;
+                if !next_token
+                    .text()
+                    .bytes()
+                    .all(|byte| matches!(byte, b' ' | b'\t'))
+                {
+                    return Ok(false);
+                }
+            }
+            _ => return Ok(false),
+        }
+    }
+    Ok(true)
+}
+
+/// Prints a lazy setext-underline-like line with its first character escaped
+/// and without leading spaces, which a paragraph line doesn't render.
+struct EscapedUnderlineLine<'a> {
+    textual: &'a MdTextual,
+}
+
+impl Format<MarkdownFormatContext> for EscapedUnderlineLine<'_> {
+    fn fmt(&self, f: &mut MarkdownFormatter) -> FormatResult<()> {
+        let token = self.textual.value_token()?;
+        f.context()
+            .comments()
+            .mark_suppression_checked(self.textual.syntax());
+        let escaped = std::format!("\\{}", token.text().trim_start_matches(' '));
+        write!(
+            f,
+            [format_replaced(
+                &token,
+                &text(&escaped, Some(token.text_range().start()))
+            )]
+        )
     }
 }
 
