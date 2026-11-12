@@ -1575,13 +1575,7 @@ fn handle_line_continuation(
     // quote's prefix, the list item open inside that quote cannot continue the
     // line, so the line is lazy text unless it starts a block at the level of
     // the containers it still continues.
-    if quote_depth > 0
-        && !line_has_quote_prefix
-        && p.state()
-            .open_list_item
-            .as_deref()
-            .is_some_and(|item| item.block_quote_depth == quote_depth)
-    {
+    if quote_depth > 0 && !line_has_quote_prefix && open_item_in_innermost_quote(p) {
         let base_indent = list_content_indent_outside_quote(p, p.line_start_leading_indent());
         let prev_required = p.state().list_item_required_indent;
         p.state_mut().list_item_required_indent = base_indent;
@@ -1605,6 +1599,16 @@ fn handle_line_continuation(
         p.state().list_item_required_indent
     };
     handle_line_after_container_prefixes(p, has_content, emit_indent_tokens, required_indent, false)
+}
+
+/// Returns whether the innermost open list item was opened inside the
+/// innermost open block quote.
+fn open_item_in_innermost_quote(p: &MarkdownParser) -> bool {
+    let quote_depth = p.state().block_quote_depth;
+    p.state()
+        .open_list_item
+        .as_deref()
+        .is_some_and(|item| item.block_quote_depth == quote_depth)
 }
 
 /// Decide whether the line after a paragraph's newline ends the paragraph,
@@ -1894,6 +1898,7 @@ fn inline_list_source_len(p: &mut MarkdownParser) -> usize {
     let start: usize = p.cur_range().start().into();
     p.lookahead(|p| {
         let mut has_content = false;
+        let mut line_continues_lazily = false;
 
         loop {
             if p.at(T![EOF]) {
@@ -1901,8 +1906,11 @@ fn inline_list_source_len(p: &mut MarkdownParser) -> usize {
             }
 
             if p.at(NEWLINE) {
-                if scan_newline_in_inline_list(p, has_content) {
-                    break;
+                match scan_newline_in_inline_list(p, has_content) {
+                    InlineNewlineAction::Break => break,
+                    action => {
+                        line_continues_lazily = matches!(action, InlineNewlineAction::ContinueLazy);
+                    }
                 }
                 continue;
             }
@@ -1915,7 +1923,7 @@ fn inline_list_source_len(p: &mut MarkdownParser) -> usize {
                 break;
             }
 
-            if p.has_preceding_line_break() && at_block_interrupt(p) {
+            if p.has_preceding_line_break() && !line_continues_lazily && at_block_interrupt(p) {
                 break;
             }
 
@@ -1933,41 +1941,63 @@ fn inline_list_source_len(p: &mut MarkdownParser) -> usize {
 
 /// Handle a NEWLINE token during inline list length scanning.
 ///
-/// Returns `true` if the scan should stop (paragraph boundary reached),
-/// `false` if scanning should continue to the next line.
-fn scan_newline_in_inline_list(p: &mut MarkdownParser, has_content: bool) -> bool {
+/// Returns `Break` if the scan should stop (paragraph boundary reached),
+/// `ContinueLazy` if the next line continues the paragraph lazily, and
+/// `Continue` otherwise, matching [`handle_line_continuation`].
+fn scan_newline_in_inline_list(p: &mut MarkdownParser, has_content: bool) -> InlineNewlineAction {
     if p.is_at_blank_line() {
         p.bump(NEWLINE);
-        return true;
+        return InlineNewlineAction::Break;
     }
 
     p.bump(NEWLINE);
 
     if MarkdownSyntaxFeatures::Gfm.is_supported(p) && at_gfm_table_with_container_prefix(p) {
-        return true;
+        return InlineNewlineAction::Break;
     }
 
     let quote_depth = p.state().block_quote_depth;
-    if quote_depth > 0 && has_quote_prefix(p, quote_depth) {
+    let line_has_quote_prefix = quote_depth > 0 && has_quote_prefix(p, quote_depth);
+    if line_has_quote_prefix {
         let break_kind = classify_quote_break_after_newline(p, quote_depth);
         if !matches!(break_kind, QuoteBreakKind::None) {
-            return true;
+            return InlineNewlineAction::Break;
         }
         consume_quote_prefix_without_virtual(p, quote_depth);
     } else if quote_depth > 1 && at_outer_quote_markers(p, quote_depth) {
         match consume_outer_quote_prefix(p, quote_depth, consume_quote_prefix_without_virtual) {
-            OuterQuoteLine::Lazy => return false,
-            OuterQuoteLine::Outer => return true,
+            OuterQuoteLine::Lazy => return InlineNewlineAction::ContinueLazy,
+            OuterQuoteLine::Outer => return InlineNewlineAction::Break,
             OuterQuoteLine::NoMatch => {}
         }
     }
 
+    // Mirrors the unprefixed-line branch of `handle_line_continuation`, so the
+    // scan ends where the parser ends the paragraph: block starts on the line
+    // are measured against the containers outside the quote, not the item.
+    if quote_depth > 0 && !line_has_quote_prefix && open_item_in_innermost_quote(p) {
+        if begins_blockquote_terminating_block(p) {
+            return InlineNewlineAction::Break;
+        }
+        let base_indent = list_content_indent_outside_quote(p, p.line_start_leading_indent());
+        let prev_required = p.state().list_item_required_indent;
+        p.state_mut().list_item_required_indent = base_indent;
+        let ends = break_for_list_interrupt_after_inline_newline(p, base_indent)
+            || at_paragraph_break(p, has_content);
+        p.state_mut().list_item_required_indent = prev_required;
+        return if ends {
+            InlineNewlineAction::Break
+        } else {
+            InlineNewlineAction::ContinueLazy
+        };
+    }
+
     if has_content && p.at(MD_SETEXT_UNDERLINE_LITERAL) && allow_setext_heading(p) {
-        return true;
+        return InlineNewlineAction::Break;
     }
 
     if has_content && p.at(MD_THEMATIC_BREAK_LITERAL) && is_dash_only_thematic_break(p) {
-        return true;
+        return InlineNewlineAction::Break;
     }
 
     if quote_depth > 0 && p.at(R_ANGLE) && !has_quote_prefix(p, quote_depth) {
@@ -1975,7 +2005,7 @@ fn scan_newline_in_inline_list(p: &mut MarkdownParser, has_content: bool) -> boo
     }
 
     if at_paragraph_break(p, has_content) {
-        return true;
+        return InlineNewlineAction::Break;
     }
 
     let required_indent = p.state().list_item_required_indent;
@@ -1995,7 +2025,7 @@ fn scan_newline_in_inline_list(p: &mut MarkdownParser, has_content: bool) -> boo
                     || (p.at(MD_THEMATIC_BREAK_LITERAL)
                         && is_dash_only_thematic_break_text(p.cur_text())))
             {
-                return true;
+                return InlineNewlineAction::Break;
             }
         } else if at_block_interrupt_after_indent(p) {
             // CommonMark §5.2: at insufficient indent we keep scanning so
@@ -2005,11 +2035,11 @@ fn scan_newline_in_inline_list(p: &mut MarkdownParser, has_content: bool) -> boo
             // scan early — without this, deeply nested list benchmarks
             // walk through every leading-whitespace token of every
             // following line.
-            return true;
+            return InlineNewlineAction::Break;
         }
     }
 
-    false
+    InlineNewlineAction::Continue
 }
 
 /// Lookahead: skip leading whitespace tokens on the current line and
