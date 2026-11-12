@@ -18,6 +18,9 @@ use biome_rowan::AstNode;
 use biome_rowan::TextSize;
 use std::ops::Add;
 
+/// Most leading spaces a setext heading underline can have (CommonMark §4.3).
+const MAX_SETEXT_UNDERLINE_INDENT: usize = 3;
+
 pub(crate) struct Quote {
     node: MdQuote,
 }
@@ -590,7 +593,7 @@ fn is_setext_underline_line(
     let token = textual.value_token()?;
     let line = token.text().trim_end_matches([' ', '\t']);
     let text = line.trim_start_matches(' ');
-    if line.len() - text.len() > 3 {
+    if line.len() - text.len() > MAX_SETEXT_UNDERLINE_INDENT {
         return Ok(false);
     }
     let Some(first) = text.bytes().next() else {

@@ -80,6 +80,11 @@ info: markdown/list_quote_nested_lazy_continuation.md
 1. 1. > > a
       > - b
 
+---
+
+1.  > > a
+    >     2. b
+
 ```
 
 
@@ -158,5 +163,10 @@ info: markdown/list_quote_nested_lazy_continuation.md
 
 1. 1. > > a
       > - b
+
+---
+
+1.  > > a
+    >     2. b
 
 ```

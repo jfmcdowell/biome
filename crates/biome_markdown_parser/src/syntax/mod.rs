@@ -75,7 +75,7 @@ use table::{at_gfm_table, at_gfm_table_with_container_prefix, parse_gfm_table};
 use thematic_break_block::{at_thematic_break_block, parse_thematic_break_block};
 
 use crate::lexer::MarkdownReLexContext;
-use crate::parser::DeferredInlineFlavor;
+use crate::parser::{DeferredInlineFlavor, count_leading_indent_from_column};
 use crate::{MarkdownParser, MarkdownSyntaxFeatures};
 
 /// Stand-ins for the MDX parsers when the `lang_mdx` feature is off, where
@@ -1243,6 +1243,10 @@ fn break_for_quote_prefix_after_inline_newline(p: &mut MarkdownParser, quote_dep
 ///
 /// A quote nested in a list item has the item's indent before its marker, so a
 /// line that keeps only the outer quotes of such a quote has an indented marker.
+///
+/// Reads the source rather than tokens: it is a cheap guard run on every
+/// continuation line of a nested quote before any lookahead, and the indent
+/// may be lexed as several whitespace tokens.
 fn at_outer_quote_markers(p: &MarkdownParser, depth: usize) -> bool {
     let rest = p.source_after_current();
     let indent = rest
@@ -1280,8 +1284,17 @@ fn consume_outer_quote_prefix(
     let checkpoint = p.checkpoint();
     for outer_depth in (1..depth).rev() {
         if consume(p, outer_depth) {
-            if rest_of_line_is_blank(p)
-                || at_block_interrupt(p)
+            if rest_of_line_is_blank(p) {
+                p.rewind(checkpoint);
+                return OuterQuoteLine::Outer;
+            }
+            // Content indented four or more columns past the matched
+            // containers would be an indented code block, which cannot
+            // interrupt a paragraph, so the line only continues it lazily.
+            if content_indent_after_current(p) >= INDENT_CODE_BLOCK_SPACES {
+                return OuterQuoteLine::Lazy;
+            }
+            if at_block_interrupt(p)
                 || textual_looks_like_list_marker(p)
                 || begins_blockquote_terminating_block(p)
             {
@@ -1294,6 +1307,19 @@ fn consume_outer_quote_prefix(
     OuterQuoteLine::NoMatch
 }
 
+/// Columns of spaces and tabs from the current position, with tabs expanded
+/// from the position's absolute column. Reads the source because the
+/// whitespace may be lexed as several tokens.
+fn content_indent_after_current(p: &MarkdownParser) -> usize {
+    let start = p.cur_range().start().into();
+    count_leading_indent_from_column(p.source_after_current(), p.cached_absolute_column_at(start))
+}
+
+/// Returns whether only spaces and tabs remain before the line end or EOF.
+///
+/// Reads the source rather than tokens because trailing whitespace may be
+/// lexed as several textual tokens or as one `MD_HARD_LINE_LITERAL` that also
+/// holds the newline.
 fn rest_of_line_is_blank(p: &MarkdownParser) -> bool {
     p.source_after_current()
         .bytes()
